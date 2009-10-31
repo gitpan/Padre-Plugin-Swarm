@@ -1,0 +1,36 @@
+---
+abstract: 'Experimental plugin for collaborative editing'
+author:
+  - 'The Padre development team as listed in Padre.pm'
+build_requires:
+  ExtUtils::MakeMaker: 6.42
+  Test::More: 0.42
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
+distribution_type: module
+generated_by: 'Module::Install version 0.91'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+module_name: Padre::Plugin::Swarm
+name: Padre-Plugin-Swarm
+no_index:
+  directory:
+    - inc
+    - share
+    - t
+  junkyard: []
+requires:
+  AnyEvent::IRC: 0
+  Class::XSAccessor: 1.03
+  Guard: 1.01
+  IO::Select: 0
+  IO::Socket::Multicast: 1.07
+  Padre: 0.36
+  Params::Util: 1.00
+  Text::Patch: 1.04
+  perl: 5.8.0
+resources:
+  license: http://dev.perl.org/licenses/
+version: 0.01

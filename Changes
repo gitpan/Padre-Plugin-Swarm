@@ -1,0 +1,13 @@
+Changes for Perl extension Padre-Plugin-Swarm
+
+0.01 to be released
+	- add chat-join announcements to chat window (BRAMBLE)
+	- add support for '/nick' change (BRAMBLE)
+	- Moved Padre::Swarm::Transport::XMPP to it's own
+	  distribution (ADAMK)
+	- Made warnings toggle'able with a single constant (ADAMK)
+	- Three available transports - two of which appear to work.
+	- Achieve universal application milestone (embed chat client).
+	- Factor some rude parts out into Padre::Service
+	- Experiments in Multicast and Jabber
+	- Creating the initial skeleton
