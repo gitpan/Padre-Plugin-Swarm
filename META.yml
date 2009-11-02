@@ -22,7 +22,6 @@ no_index:
     - t
   junkyard: []
 requires:
-  AnyEvent::IRC: 0
   Class::XSAccessor: 1.03
   Guard: 1.01
   IO::Select: 0
@@ -33,4 +32,4 @@ requires:
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.01
+version: 0.02

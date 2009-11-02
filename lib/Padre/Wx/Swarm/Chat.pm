@@ -25,11 +25,12 @@ use Class::XSAccessor
 		service   => 'service',
 		textinput => 'textinput',
 		chatframe => 'chatframe',
+		users => 'users',
 	},
 	setters => {
 		'set_task' => 'task',
 	};
-
+                
 use constant DEBUG => Padre::Plugin::Swarm::DEBUG;
 
 sub new {
@@ -47,7 +48,7 @@ sub new {
 	# build large area for chat output , with a
 	#  single line entry widget for input
 	my $sizer = Wx::BoxSizer->new(Wx::wxVERTICAL);
-
+        my $hbox = Wx::BoxSizer->new(Wx::wxHORIZONTAL);
 	my $text = Wx::TextCtrl->new(
 		$self, -1, '',
 		Wx::wxDefaultPosition,
@@ -62,7 +63,10 @@ sub new {
 		| Wx::wxTE_MULTILINE
 		| Wx::wxNO_FULL_REPAINT_ON_RESIZE
 	);
-	$sizer->Add($chat,1, Wx::wxGROW );
+	
+	$hbox->Add( $chat , 1 , Wx::wxGROW );
+	
+	$sizer->Add($hbox,1, Wx::wxGROW );
 	$sizer->Add($text,0, Wx::wxGROW );
 
 	$self->textinput( $text );
@@ -91,7 +95,7 @@ sub new {
 		}
 	);
 	$self->service( $service );
-
+        $self->users( {} );
 	Wx::Event::EVT_TEXT_ENTER(
                 $self, $text,
                 \&on_text_enter
@@ -171,20 +175,46 @@ sub accept_message {
 		return unless defined $content;
 		# TODO - some styling would be nice.
 		#  some day colour code each identity
-		my $output = sprintf( "%s :%s\n", $user, $content );
-		$self->chatframe->AppendText( $output );
+		$self->accept_chat($message);
 	}
 	elsif ( _INSTANCE( $message , 'Padre::Swarm::Message::Diff' ) ) {
 		$self->on_receive_diff($message);
 		return;
 	}
 	elsif ( $message->type eq 'announce' ) {
-	    $self->chatframe->AppendText( $message->from . " has joined the swarm \n" );
+	    $self->accept_announce($message);
 	}
 	else {
 		warn "Discarded $message" if DEBUG;
 	}
 }
+
+sub accept_chat {
+    my ($self,$message) = @_;
+    
+    my $style = $self->chatframe->GetDefaultStyle;
+    my $rgb   = derive_rgb( $message->from );
+    $style->SetTextColour( Wx::Colour->new(@$rgb) );
+    $self->chatframe->SetDefaultStyle($style);
+    my $output = sprintf( "%s :%s\n", $message->from, $message->body );
+    $self->chatframe->AppendText( $output );
+    
+    
+}
+
+sub accept_announce {
+    my ($self,$announce) = @_;
+    my $nick = $announce->{from};
+    if ( exists $self->users->{$nick} ) {
+        return
+    }
+    else {
+        $self->chatframe->AppendText( $announce->from . " has joined the swarm \n" );
+        $self->users->{$nick} = 1;
+    }
+    
+}
+
 
 sub tell_service {
 	my $self    = shift;
@@ -250,12 +280,12 @@ sub on_receive_diff {
 		return;
 	}
 
-	Wx::Perl::Dialog::Simple::dialog(
-		sub {},
-		sub {},
-		sub {},
-		{ title => 'Swarm Diff' }
-	);
+#	Wx::Perl::Dialog::Simple::dialog(
+#		sub {},
+#		sub {},
+#		sub {},
+#		{ title => 'Swarm Diff' }
+#	);
 	warn "Patching $file in $project" if DEBUG;
 	warn "APPLY PATCH \n" . $diff if DEBUG;
 	eval {
@@ -319,5 +349,63 @@ sub on_diff_snippet {
 	$self->tell_service( $message );
 	return;
 }
+
+
+## Try to style each identity differently
+
+
+HSV2RGB: {
+	my %vars;
+	%vars = ( 
+		h=>\my $h,
+		s=>\my $s,
+		v=>\my $v, 
+		t=>\my $t,
+		f=>\my $f,
+		p=>\my $p,
+		q=>\my $q,
+	);
+	my @matrix = (
+		[$vars{v}, $vars{t}, $vars{p}],
+		[$vars{q}, $vars{v}, $vars{p}],
+		[$vars{p}, $vars{v}, $vars{t}],
+		[$vars{p}, $vars{q}, $vars{v}],
+		[$vars{t}, $vars{p}, $vars{v}],
+		[$vars{v}, $vars{p}, $vars{q}],
+	);
+	
+sub hsv2rgb {
+	($h,$s,$v) = @_;
+	my $h_index = ( $h / 60 ) % 6;
+	
+	$f = abs( $h/60 ) - $h_index;
+	$p = $v * ( 1 - $s );
+	$q = $v * ( 1 - ($f * $s));
+	$t = $v * ( 1 - ( 1 - $f ) * $s );
+	
+	#$q = $v * ( 1 - $s * ($h 
+	
+	my $result = $matrix[$h_index];
+	my @rgb = map { $$_ } @$result;
+	return \@rgb;
+
+}
+
+}
+
+use Digest::MD5 qw( md5 );
+sub derive_rgb {
+    my $string = shift;
+    my $digest = md5($string);
+    my $word   = substr($digest,0,2);
+    my $int    = unpack('%S',$word);
+    my $hue = 360 * ( $int / 65535 );
+    my $norm =  hsv2rgb( $hue, 0.8, 0.75 );
+    my @rgb =  map { int(255*$_) } @$norm;
+    return \@rgb;
+}
+
+
+
 
 1;
