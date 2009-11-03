@@ -1,3 +1,4 @@
+.swp
 Changes
 inc/Module/Install.pm
 inc/Module/Install/Base.pm
@@ -26,7 +27,6 @@ lib/Padre/Swarm/Message/Diff.pm
 lib/Padre/Swarm/Service.pm
 lib/Padre/Swarm/Service/Chat.pm
 lib/Padre/Swarm/Transport.pm
-lib/Padre/Swarm/Transport/IRC.pm
 lib/Padre/Swarm/Transport/Multicast.pm
 lib/Padre/Wx/Swarm/Chat.pm
 Makefile.PL
@@ -39,7 +39,5 @@ share/icons/padre/scalable/status/plugin-padre-swarm.svgz
 t/01_compile.t
 t/02_identity.t
 t/05_transport.t
-t/05_transport_irc.t
 t/06_service.t
-t/07_service_irc.t
 t/lib/Demo.pm
