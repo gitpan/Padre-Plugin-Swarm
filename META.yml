@@ -26,10 +26,10 @@ requires:
   Guard: 1.01
   IO::Select: 0
   IO::Socket::Multicast: 1.07
-  Padre: 0.36
+  Padre: 0.51
   Params::Util: 1.00
   Text::Patch: 1.04
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.04
+version: 0.05

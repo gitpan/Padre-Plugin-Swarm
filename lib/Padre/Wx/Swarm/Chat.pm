@@ -6,7 +6,9 @@ use warnings;
 use Text::Patch ();
 use Params::Util qw{_INSTANCE};
 use Wx::Perl::Dialog::Simple;
+
 use Padre::Current qw{_CURRENT};
+use Padre::Debug;
 use Padre::Wx ();
 use Padre::Config ();
 use Padre::Plugin::Swarm ();
@@ -15,8 +17,8 @@ use Padre::Swarm::Identity;
 use Padre::Swarm::Message;
 use Padre::Swarm::Message::Diff;
 use Padre::Swarm::Service::Chat;
-
-our $VERSION = '0.04';
+use Padre::Util;
+our $VERSION = '0.05';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor
@@ -31,7 +33,7 @@ use Class::XSAccessor
 		'set_task' => 'task',
 	};
                 
-use constant DEBUG => Padre::Plugin::Swarm::DEBUG;
+#use constant DEBUG => Padre::Plugin::Swarm::DEBUG;
 
 sub new {
 	my $class = shift;
@@ -118,7 +120,7 @@ sub gettext_label {
 
 sub enable {
 	my $self     = shift;
-	Padre::Util::debug( "Enable Chat" );
+	TRACE( "Enable Chat" ) if DEBUG;
 	$self->service->schedule;
 	# Set up the event handler, we will
 	# ->accept_message when the task loop ->post_event($data)
@@ -143,7 +145,7 @@ sub enable {
 
 sub disable {
 	my $self = shift;
-	Padre::Util::debug( 'Disable Chat' );
+	TRACE( 'Disable Chat' ) if DEBUG;
 	my $main = $self->main;
 	my $bottom= $self->bottom;
 	my $position = $bottom->GetPageIndex($self);
@@ -167,51 +169,134 @@ sub accept_message {
 	return if $payload eq 'ALIVE';
 
 	my $message = Storable::thaw($payload);
+	warn "accepted $message" if DEBUG;
 	return unless _INSTANCE( $message , 'Padre::Swarm::Message' );
 
-	if ( $message->type eq 'chat' ) {
-		my $user = $message->from || 'unknown';
-		my $content = $message->body;
-		return unless defined $content;
-		# TODO - some styling would be nice.
-		#  some day colour code each identity
-		$self->accept_chat($message);
-	}
-	elsif ( _INSTANCE( $message , 'Padre::Swarm::Message::Diff' ) ) {
-		$self->on_receive_diff($message);
-		return;
-	}
-	elsif ( $message->type eq 'announce' ) {
-	    $self->accept_announce($message);
-	}
-	else {
-		warn "Discarded $message" if DEBUG;
-	}
+        my $handler = 'accept_' . $message->type;
+        if ( $self->can( $handler ) ) {
+            eval {
+                $self->$handler($message);
+            };
+            if ($@) {
+                $self->write_user_styled( $message->from,$message->from );
+                $self->write_unstyled(" sent unhandled message " 
+                    . $message->type . "\n" );
+                    
+            }
+        }
+
+}
+
+sub write_unstyled {
+    my ($self,$text) = @_;
+    my $style = $self->chatframe->GetDefaultStyle;
+    $style->SetTextColour( Wx::Colour->new(0,0,0) );
+    $self->chatframe->SetDefaultStyle($style);
+    $self->chatframe->AppendText($text);
+    
+}
+
+sub write_user_styled { 
+    my ($self,$user,$text) = @_;
+    my $style = $self->chatframe->GetDefaultStyle;
+    my $rgb   = derive_rgb( $user );
+    $style->SetTextColour( Wx::Colour->new(@$rgb) );
+    $self->chatframe->SetDefaultStyle($style);
+    $self->chatframe->AppendText($text);
 }
 
 sub accept_chat {
     my ($self,$message) = @_;
-    
-    my $style = $self->chatframe->GetDefaultStyle;
-    my $rgb   = derive_rgb( $message->from );
-    $style->SetTextColour( Wx::Colour->new(@$rgb) );
-    $self->chatframe->SetDefaultStyle($style);
-    my $output = sprintf( "%s :%s\n", $message->from, $message->body );
-    $self->chatframe->AppendText( $output );
-    
+    $self->write_user_styled(
+        $message->from,
+        $message->from . ': '
+    );
+    $self->write_unstyled( $message->body . "\n" );
     
 }
 
 sub accept_announce {
     my ($self,$announce) = @_;
-    my $nick = $announce->{from};
+    my $nick = $announce->from;
     if ( exists $self->users->{$nick} ) {
         return
     }
     else {
-        $self->chatframe->AppendText( $announce->from . " has joined the swarm \n" );
+        $self->write_user_styled( $announce->from , $announce->from );
+        $self->write_unstyled(  " has joined the swarm \n" );
         $self->users->{$nick} = 1;
     }
+    
+}
+
+sub accept_promote {
+    my ($self,$message) = @_;
+    next unless $message->{service} =~ m/chat/i;
+    
+    my $text = sprintf '%s promotes a chat service', $message->from;
+    $self->write_user_styled( $message->from,  $text . "\n" );
+    
+}
+
+sub accept_leave {
+    my ($self,$message) = @_;
+    my $identity = $message->from;
+    $self->write_user_styled( $identity , $identity );
+    $self->write_unstyled( " has left the swarm.\n" );
+    
+}
+
+sub accept_runme {
+    my ($self,$message) = @_;
+    # Ouch..
+    my @result = (eval $message->body);
+    if ( $@ ) {
+        $self->write_user_styled( $message->from , $message->from );
+        $self->write_unstyled( ' ran' . $message->{filename}
+            . ' in YOUR editor but failed!! ' . $@ );
+    }
+    else {
+        $self->write_user_styled( $message->from , $message->from );
+        $self->write_unstyled( ' ran ' . $message->{filename}
+            . ' in YOUR editor successfully, returning '
+            . join ', ' , @result
+        );
+        
+    }
+    
+}
+
+sub command_nick {
+    my ($self,$new_nick) = @_;
+    
+    my $previous =
+            $self->service->identity->nickname;	
+        eval {
+            $self->service->identity->set_nickname( $new_nick );
+        };
+
+        $self->tell_service( 
+            "was -> ".
+            $previous	
+        ) unless $@;
+    
+}
+
+sub command_spam {
+    my ($self,$data) = @_;
+    
+    my $icon  = Padre::Wx::Icon::find(
+        'status/padre-plugin-swarm',
+        {
+                size  => '128x128',
+                icons => $self->plugin_icons_directory,
+        } 
+    );
+    $icon->Show;
+    
+}
+
+sub command_disco {
     
 }
 
@@ -233,30 +318,33 @@ sub tell_service {
 sub on_text_enter {
     my ($self,$event) = @_;
     my $message = $self->textinput->GetValue;
+    $self->textinput->SetValue('');
     
-    # Handle /nick for now so everyone is not Anonymous_$$
-    if ( my ($new_nick) = $message =~ m{^/nick\s+(.+)} ) {
-        my $previous =
-            $self->service->identity->nickname;	
-        eval {
-            $self->service->identity->set_nickname( $new_nick );
-        };
-
-        $self->tell_service( 
-            "was -> ".
-            $previous	
-        ) unless $@;
-
-    } else {
+    if ( $message =~ m{^/(\w+)\s+} ) {
+        $self->accept_command( $message ) 
+    }    
+    else {
         $self->tell_service( $message );
     }
-    
-    $self->textinput->SetValue('');
 }
 
-sub on_receive_diff {
+sub accept_command {
+    my ($self,$message) = @_;
+    # Handle /nick for now so everyone is not Anonymous_$$
+    my ($command,$data) = $message =~ m{^/(\w+)\s+(.+)} ;
+    if ( 'nick' eq $command ) {
+        $self->command_nick( $data );
+    } 
+    elsif ( 'spam' eq $command ) {
+        $self->command_spam( $data );
+    }
+    else { $self->tell_service( $message ); }
+    
+}
+
+sub accept_diff {
 	my ($self,$message) = @_;
-	warn "Received diff $message" if DEBUG;
+	TRACE("Received diff $message") if DEBUG;
 
 	my $project = $message->project;
 	my $file = $message->file;
@@ -270,13 +358,13 @@ sub on_receive_diff {
 	my $p_file = $current->filename;
 	$p_file =~ s/^$p_dir//;
 
-	warn "Have current doc $p_file, $p_name" if DEBUG;
+	TRACE("Have current doc $p_file, $p_name") if DEBUG;
 	return unless $p_dir;
 	return unless ( $p_name eq $project );
 
 	# Ignore my own diffs
 	if ( $message->from eq $self->service->identity->nickname ) {
-		warn "Ignore my own diffs" if DEBUG;
+		TRACE("Ignore my own diffs") if DEBUG;
 		return;
 	}
 
@@ -286,15 +374,15 @@ sub on_receive_diff {
 #		sub {},
 #		{ title => 'Swarm Diff' }
 #	);
-	warn "Patching $file in $project" if DEBUG;
-	warn "APPLY PATCH \n" . $diff if DEBUG;
+	TRACE("Patching $file in $project") if DEBUG;
+	TRACE("APPLY PATCH \n" . $diff) if DEBUG;
 	eval {
 		my $result = Text::Patch::patch( $current->text_get , $diff , STYLE=>'Unified' );
 		$editor->SetText( $result );
 	};
 
-	if ( DEBUG ) {
-		warn $@ if $@;
+	if ( $@ ) {
+		TRACE($@) if DEBUG;
 	}
 }
 
@@ -331,7 +419,7 @@ sub on_diff_snippet {
 			CORE::close($fh);
 			system( $external_diff, $filename, $file );
 		} else {
-			warn $! if DEBUG;
+			TRACE($!) if DEBUG;
 		}
 
 		# save current version in a temp directory

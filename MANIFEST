@@ -16,6 +16,7 @@ junkyard/coop.pl
 junkyard/hsv.pl
 junkyard/irc_gw.pl
 junkyard/listener.pl
+junkyard/relay.pl
 junkyard/upnp.pl
 lib/Padre/Plugin/Swarm.pm
 lib/Padre/Service/Swarm.pm
