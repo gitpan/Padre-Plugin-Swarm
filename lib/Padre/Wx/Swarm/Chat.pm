@@ -18,7 +18,7 @@ use Padre::Swarm::Message;
 use Padre::Swarm::Message::Diff;
 use Padre::Swarm::Service::Chat;
 use Padre::Util;
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor
@@ -106,6 +106,8 @@ sub new {
 	return $self;
 }
 
+sub plugin { Padre::Plugin::Swarm->instance };
+
 sub bottom {
 	$_[0]->GetParent;
 }
@@ -115,7 +117,7 @@ sub main {
 }
 
 sub gettext_label {
-	Wx::gettext('Swarm - Chat');
+	Wx::gettext('Chat');
 }
 
 sub enable {
@@ -135,7 +137,11 @@ sub enable {
 	my $main     = $self->main;
 	my $bottom   = $self->bottom;
 	my $position = $bottom->GetPageCount;
-	$bottom->InsertPage( $position, $self, gettext_label(), 0 );
+	my $pos = $bottom->InsertPage( $position, $self, gettext_label(), 0 );
+
+    my $icon = $self->plugin->plugin_icon;  
+	$bottom->SetPageBitmap($pos, $icon );
+	
 	$self->Show;
 	$bottom->SetSelection($position);
 	$main->aui->Update;
@@ -180,7 +186,7 @@ sub accept_message {
             if ($@) {
                 $self->write_user_styled( $message->from,$message->from );
                 $self->write_unstyled(" sent unhandled message " 
-                    . $message->type . "\n" );
+                    . $message->type .  $@ . "\n" );
                     
             }
         }
@@ -231,7 +237,7 @@ sub accept_announce {
 
 sub accept_promote {
     my ($self,$message) = @_;
-    next unless $message->{service} =~ m/chat/i;
+    return unless $message->{service} =~ m/chat/i;
     
     my $text = sprintf '%s promotes a chat service', $message->from;
     $self->write_user_styled( $message->from,  $text . "\n" );
@@ -253,16 +259,32 @@ sub accept_runme {
     if ( $@ ) {
         $self->write_user_styled( $message->from , $message->from );
         $self->write_unstyled( ' ran' . $message->{filename}
-            . ' in YOUR editor but failed!! ' . $@ );
+            . ' in YOUR editor but failed!! ' . $@. "\n" );
     }
     else {
         $self->write_user_styled( $message->from , $message->from );
         $self->write_unstyled( ' ran ' . $message->{filename}
             . ' in YOUR editor successfully, returning '
-            . join ', ' , @result
+            . join (', ' , @result)
+            . "\n"
         );
         
     }
+    
+}
+
+sub accept_openme {
+    my ($self,$message) = @_;
+    
+    $self->main
+         ->new_document_from_string( $message->body );
+    
+    $self->write_unstyled( 
+        sprintf("Opened document %s from " ,
+            $message->{filename} )
+    );
+    $self->write_user_styled( $message->from, $message->from );
+        
     
 }
 
