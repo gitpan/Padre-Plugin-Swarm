@@ -8,26 +8,162 @@ use Padre::Constant        ();
 use Padre::Wx              ();
 use Padre::Plugin          ();
 use Padre::Wx::Icon        ();
+use Padre::Service::Swarm  ();
+use Padre::Swarm::Geometry ();
+use Padre::Logger;
 
-our $VERSION = '0.06';
+
+use Class::XSAccessor 
+	accessors => {
+		geometry => 'geometry',
+		resources=> 'resources',
+		editor   => 'editor',
+		chat     => 'chat',
+		config   => 'config',
+		message_event => 'message_event',
+		wx => 'wx',
+	};
+	
+use Wx::Socket ();
+
+our $VERSION = '0.07';
 our @ISA     = 'Padre::Plugin';
 
-use Class::XSAccessor
-	getters => {
-		get_config   => 'config',
-		get_services => 'services',
-		get_chat     => 'chat',
-		get_sidebar  =>'sidebar',
-	},
-	setters => {
-		set_config   => 'config',
-		set_services =>'services',
-		set_chat     => 'chat',
-		set_sidebar  => 'sidebar',
-	};
+# The padre multicast group (unofficial)
+my $WxSwarmAddr = Wx::IPV4address->new;
+$WxSwarmAddr->SetHostname('239.255.255.1');
+$WxSwarmAddr->SetService(12000);
 
-# Turn this on to enable warnings
-use constant DEBUG => 1;
+# Local address 
+my $WxLocalAddr = Wx::IPV4address->new;
+$WxLocalAddr->SetAnyAddress;
+$WxLocalAddr->SetService( 0 );
+
+
+
+
+
+SCOPE: {
+  my $SOCK_SEND;
+  my $EVT_RECV;
+  my $EVT_SWARM_RECV ;
+  my $SERVICE;
+  sub connect {
+	my $self = shift;
+	my $listen_service = Padre::Service::Swarm->new;
+	$listen_service->schedule;
+	$EVT_RECV = $listen_service->event;
+	$SERVICE = $listen_service;
+	$SOCK_SEND = Wx::DatagramSocket->new( $WxLocalAddr );
+	
+
+	#EVT_SOCKET_INPUT($self->main , $sock , \&onConnect ) ;
+	Wx::Event::EVT_COMMAND(
+		$self->main,
+		-1,
+		$EVT_RECV,
+		sub { $self->accept_message(@_) }
+	);
+	
+	
+	
+  }
+  
+  sub disconnect {
+  	my $self = shift;
+  	
+  	
+  	$SERVICE->tell('HANGUP');
+  	$self->send( {type=>'leave'} );
+  	undef $EVT_RECV;
+  	undef $SOCK_SEND;
+  	undef $EVT_SWARM_RECV;
+  	
+  	
+  }
+
+sub event { $EVT_RECV }
+
+sub send {
+	return unless $SOCK_SEND;
+	shift->_send(@_);
+}
+
+sub _send {
+	my $self = shift;
+	my $message = shift;
+	$message->{from} = $self->identity->nickname;
+	my $data =  $SERVICE->marshal->encode( $message );
+	$SOCK_SEND->SendTo($WxSwarmAddr, $data, length($data) );
+	
+}
+
+
+}
+
+sub accept_message { 
+	my ($self,$main,$event) = @_;
+	my $data = $event->GetData;
+	unless ( __PACKAGE__->instance ) {
+		TRACE( "Caught message event late/early '$data'" ) if DEBUG;
+		return;
+	}
+
+	if ( $data eq 'ALIVE' ) {
+		TRACE( "Swarm service is alive" ) if DEBUG;
+		$self->send(
+			{ type=>'announce', service=>'swarm' }
+		);
+		$self->send(
+			{ type=>'disco', service=>'swarm' }
+		);
+		return;
+	}
+	my $message = eval {  Storable::thaw( $data ); };
+	TRACE( "Got $message from service" ) if DEBUG;
+	# TODO can i use 'SWARM' instead?
+	my $lock = $main->lock('UPDATE'); 
+	my $handler = 'accept_' . $message->type;
+	if ( $self->can( $handler ) ) {
+		TRACE( $handler ) if DEBUG;
+		eval { $self->$handler( $message ); };
+	}
+	
+	# TODO - make these parts use the message event! srsly
+	$self->geometry->On_SwarmMessage( $message );
+	
+	# TODO resource browser should trap the event itself. 
+	#$self->resources->refresh;
+	
+	# 
+	Wx::PostEvent(
+                $self->wx,
+                Wx::PlThreadEvent->new( -1, $self->message_event , $data ),
+        ) if $self->message_event;
+}
+
+sub accept_disco {
+	my ($self,$message) = @_;
+	$self->send( {type=>'promote',service=>'swarm'} );
+	
+}
+
+
+
+sub identity {
+	my $config = Padre::Config->read;
+	my $nickname = $config->identity_nickname;
+	unless ( $nickname ) {
+		$nickname = "Anonymous_$$";
+	}
+	Padre::Swarm::Identity->new( 
+		nickname => $nickname,
+		service => 'swarm',
+	);
+}
+
+
+
 
 
 
@@ -41,7 +177,7 @@ sub padre_interfaces {
 }
 
 sub plugin_name {
-	'Swarm!';
+	'Swarm';
 }
 
 sub plugin_icons_directory {
@@ -75,60 +211,92 @@ sub menu_plugins_simple {
 # Singleton (I think)
 SCOPE: {
 	my $instance;
+	sub new { $instance = shift->SUPER::new(@_); }
 
 	sub instance { $instance };
 
 	sub plugin_enable {
-		require Padre::Wx::Swarm::Chat;
-		my $self   = shift;
-		$instance  = $self;
-		my $config = $self->config_read;
-		$self->set_config( $config );
-		
-#            # Cargo WebGui
-#            # workaround Padre bug
-#            my %registered_documents = $self->registered_documents;
-#            while ( my ( $k, $v ) = each %registered_documents ) {
-#            Padre::MimeTypes->add_highlighter_to_mime_type( $k, $v );
-#        }
 
-		$self->_load_everything;
+		my $self   = shift;
+		# TODO - enforce singleton!! 
+		$instance  = $self;
+		my $wxobj = new Wx::Panel $self->main;
+		$self->wx( $wxobj );
+		$wxobj->Hide;
+		my $message_event  = Wx::NewEventType;
+		$self->message_event($message_event);
+
+		require Padre::Wx::Swarm::Chat;
+		require Padre::Plugin::Swarm::Wx::Resources;
+		require Padre::Plugin::Swarm::Wx::Editor;
+
+		
+		my $config = $self->config_read;
+		$self->config( $config );
+
+
+		
+		$self->geometry( Padre::Swarm::Geometry->new );
+		
+		my $editor = Padre::Plugin::Swarm::Wx::Editor->new();
+		$self->editor($editor);
+		$editor->enable;
+
+		my $chat = Padre::Wx::Swarm::Chat->new( $self->main );
+		$self->chat( $chat );
+		$chat->enable;
+
+
+		my $directory = Padre::Plugin::Swarm::Wx::Resources->new(
+			$self->main
+		);
+		$self->resources( $directory );
+		$directory->enable;
+
+		$self->connect();
+		1;
 	}
 
 	sub plugin_disable {
 		my $self = shift;
+		$self->chat->disable;
+		$self->chat(undef);
+		
+		$self->resources->disable;
+		$self->resources(undef);
+	
+		$self->editor->disable;
+		$self->editor(undef);
+		
+		$self->disconnect;
+	
 		undef $instance;
-		$self->_destroy_ui;
+	
+		
 	}
 }
 
 
-#sub registered_documents {
-#    'application/x-swarm-document' =>    
-#        'Padre::Plugin::Swarm::Document',
-#}
-#
-#
-#sub editor_enable {
-#	my ( $self, $editor, $doc ) = @_;
-#	$self->{editor}{ refaddr $editor} = 1; 
-#	return 1;
-#}
-#
-## Does this really happen ? # cargo from Plugin::Vi
-#sub editor_stop {
-#	my ( $self, $editor, $doc ) = @_;
-#	delete $self->{editor}{ refaddr $editor};
-#
-#	return 1;
-#}
+sub editor_enable {
+	my $self = shift;
+	$self->editor->editor_enable(@_);
+}
+
+sub editor_disable {
+	my $self = shift;
+	$self->editor->editor_disable(@_);
+}
+
+
+
+
 
 # oh noes!
 sub run_in_other_editor {
     my $self = shift;
     my $ed = $self->current->editor;
     my $doc = $self->current->document;
-    $self->get_chat->tell_service(
+    $self->send(
         Padre::Swarm::Message->new(
             type => 'runme',
             body => $ed->GetText,
@@ -146,7 +314,7 @@ sub open_in_other_editor {
         body => $doc->text_get,
         filename => $doc->filename,
     );
-    $self->get_chat->tell_service($message);
+    $self->send($message);
     
 }
 
@@ -176,30 +344,7 @@ END_MESSAGE
 }
 
 
-###
-# Private
-
-sub _load_everything {
-	my $self   = shift;
-	my $config = $self->get_config;
-
-	# TODO bootstrap some config and construct
-	# services/transports. for now just chat
-	my $chatframe = Padre::Wx::Swarm::Chat->new($self->main);
-	$self->set_chat( $chatframe );
-	$chatframe->enable;
-}
-
-sub _destroy_ui {
-	my $self = shift;
-	if ( my $chat = $self->get_chat ) {
-		$chat->disable;
-	}
-	$self->set_chat(undef);
-
-}
-
-# Copyright 2008-2009 The Padre development team as listed in Padre.pm.
+# Copyright 2008-2010 The Padre development team as listed in Padre.pm.
 # LICENSE
 # This program is free software; you can redistribute it and/or
 # modify it under the same terms as Perl 5 itself.

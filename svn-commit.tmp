@@ -1,0 +1,5 @@
+remove trace -( 
+--This line, and those below, will be ignored--
+
+M    lib/Padre/Service/Swarm.pm
+M    lib/Padre/Plugin/Swarm.pm

@@ -8,7 +8,7 @@ use Params::Util qw{_INSTANCE};
 use Wx::Perl::Dialog::Simple;
 
 use Padre::Current qw{_CURRENT};
-use Padre::Debug;
+use Padre::Logger;
 use Padre::Wx ();
 use Padre::Config ();
 use Padre::Plugin::Swarm ();
@@ -16,9 +16,8 @@ use Padre::Service::Swarm;
 use Padre::Swarm::Identity;
 use Padre::Swarm::Message;
 use Padre::Swarm::Message::Diff;
-use Padre::Swarm::Service::Chat;
 use Padre::Util;
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor
@@ -27,13 +26,12 @@ use Class::XSAccessor
 		service   => 'service',
 		textinput => 'textinput',
 		chatframe => 'chatframe',
+		userlist  => 'userlist',
 		users => 'users',
 	},
 	setters => {
 		'set_task' => 'task',
 	};
-                
-#use constant DEBUG => Padre::Plugin::Swarm::DEBUG;
 
 sub new {
 	my $class = shift;
@@ -66,7 +64,18 @@ sub new {
 		| Wx::wxNO_FULL_REPAINT_ON_RESIZE
 	);
 	
+	my $userlist = Wx::ListView->new(
+		$self, -1 ,
+                Wx::wxDefaultPosition,
+                Wx::wxDefaultSize,
+                Wx::wxLC_REPORT | Wx::wxLC_SINGLE_SEL
+        );
+        $userlist->InsertColumn( 0, 'Users' );
+        $userlist->SetColumnWidth( 0, -1 );
+	$self->userlist($userlist);
+	
 	$hbox->Add( $chat , 1 , Wx::wxGROW );
+	$hbox->Add( $userlist, 0 , Wx::wxGROW );
 	
 	$sizer->Add($hbox,1, Wx::wxGROW );
 	$sizer->Add($text,0, Wx::wxGROW );
@@ -87,20 +96,15 @@ sub new {
 		resource => 'Padre',
 	);
 
-	my $service = Padre::Swarm::Service::Chat->new(
-		identity      => $identity,
-		use_transport => {
-			'Padre::Swarm::Transport::Multicast'=>{
-				identity => $identity,
-				loopback => 1,
-			},
-		}
-	);
-	$self->service( $service );
         $self->users( {} );
+        
 	Wx::Event::EVT_TEXT_ENTER(
                 $self, $text,
                 \&on_text_enter
+        );
+        
+        Wx::Event::EVT_CLOSE(
+		$self,  sub { warn "Closed! ",@_ },
         );
 
 	return $self;
@@ -123,27 +127,27 @@ sub gettext_label {
 sub enable {
 	my $self     = shift;
 	TRACE( "Enable Chat" ) if DEBUG;
-	$self->service->schedule;
-	# Set up the event handler, we will
-	# ->accept_message when the task loop ->post_event($data)
-	#  to us.
+	TRACE( " main window is " . $self->main ) if DEBUG;
+	TRACE( " message event is " . $self->plugin->message_event ) if DEBUG;	
 	Wx::Event::EVT_COMMAND(
-		Padre->ide->wx->main,
+		$self->plugin->wx,
 		-1,
-		$self->service->event,
+		$self->plugin->message_event,
 		sub { $self->accept_message(@_) }
 	);
 	# Add ourself to the gui;
 	my $main     = $self->main;
 	my $bottom   = $self->bottom;
 	my $position = $bottom->GetPageCount;
-	my $pos = $bottom->InsertPage( $position, $self, gettext_label(), 0 );
-
-    my $icon = $self->plugin->plugin_icon;  
-	$bottom->SetPageBitmap($pos, $icon );
 	
+	$self->update_userlist;
+	
+	my $pos = $bottom->InsertPage( $position, $self, gettext_label(), 0 );
 	$self->Show;
+	my $icon = $self->plugin->plugin_icon;  
+	$bottom->SetPageBitmap($position, $icon );
 	$bottom->SetSelection($position);
+	$self->textinput->SetFocus;
 	$main->aui->Update;
 
 	$self->{enabled} = 1;
@@ -155,8 +159,6 @@ sub disable {
 	my $main = $self->main;
 	my $bottom= $self->bottom;
 	my $position = $bottom->GetPageIndex($self);
-	$self->service->tell('HANGUP');
-
 	$self->Hide;
 
 
@@ -165,21 +167,38 @@ sub disable {
 	$self->Destroy;
 }
 
+sub update_userlist {
+	my $self = shift;
+	my $userlist = $self->userlist;
+	my $geo = $self->plugin->geometry;
+	my @users = $geo->get_users();
+	$userlist->DeleteAllItems;
+	foreach my $user ( @users ) {
+		my $item = Wx::ListItem->new( );
+		$item->SetText( $user );
+		$item->SetTextColour( 
+			Wx::Colour->new( @{ derive_rgb($user) } )  
+		);
+		$userlist->InsertItem( $item );
+	}
+	$userlist->SetColumnWidth( 0, -1 );
+	
+}
+
 sub accept_message {
 	my $self = shift;
 	my $main = shift;
 	my $evt = shift;
 
 	my $payload = $evt->GetData;
-	# Hack - the alive should be via service poll event ?
-	return if $payload eq 'ALIVE';
+	$evt->Skip(1);
 
 	my $message = Storable::thaw($payload);
-	warn "accepted $message" if DEBUG;
 	return unless _INSTANCE( $message , 'Padre::Swarm::Message' );
-
         my $handler = 'accept_' . $message->type;
+	TRACE( $handler ) if DEBUG;
         if ( $self->can( $handler ) ) {
+        	TRACE( $message->{from} . ' sent ' . $message->{type} ) if DEBUG;
             eval {
                 $self->$handler($message);
             };
@@ -225,35 +244,46 @@ sub accept_announce {
     my ($self,$announce) = @_;
     my $nick = $announce->from;
     if ( exists $self->users->{$nick} ) {
-        return
+        return;
     }
     else {
         $self->write_user_styled( $announce->from , $announce->from );
         $self->write_unstyled(  " has joined the swarm \n" );
         $self->users->{$nick} = 1;
     }
+     $self->update_userlist;
     
 }
 
 sub accept_promote {
     my ($self,$message) = @_;
-    return unless $message->{service} =~ m/chat/i;
+    if ( $message->{service} eq 'chat' ) {
+	$self->update_userlist;
+	my $text = sprintf '%s promotes a chat service', $message->from;
+	$self->write_user_styled( $message->from,  $text . "\n" );
+    }
     
-    my $text = sprintf '%s promotes a chat service', $message->from;
-    $self->write_user_styled( $message->from,  $text . "\n" );
     
+}
+
+sub accept_disco {
+	my ($self,$message) = @_;
+	$self->plugin->send( {type=>'promote',service=>'chat'} );
 }
 
 sub accept_leave {
     my ($self,$message) = @_;
     my $identity = $message->from;
+    delete $self->users->{$identity};
     $self->write_user_styled( $identity , $identity );
     $self->write_unstyled( " has left the swarm.\n" );
-    
+    $self->update_userlist;
 }
 
 sub accept_runme {
     my ($self,$message) = @_;
+    # Previously the honour system - now pure evil.
+    return if $message->from ne $self->plugin->identity->nickname;
     # Ouch..
     my @result = (eval $message->body);
     if ( $@ ) {
@@ -273,28 +303,15 @@ sub accept_runme {
     
 }
 
-sub accept_openme {
-    my ($self,$message) = @_;
-    
-    $self->main
-         ->new_document_from_string( $message->body );
-    
-    $self->write_unstyled( 
-        sprintf("Opened document %s from " ,
-            $message->{filename} )
-    );
-    $self->write_user_styled( $message->from, $message->from );
-        
-    
-}
 
 sub command_nick {
     my ($self,$new_nick) = @_;
-    
     my $previous =
-            $self->service->identity->nickname;	
+            $self->plugin->identity->nickname;
         eval {
-            $self->service->identity->set_nickname( $new_nick );
+            my $config = Padre::Config->read;
+            $config->set( identity_nickname => $new_nick );
+            $config->write;
         };
 
         $self->tell_service( 
@@ -304,22 +321,9 @@ sub command_nick {
     
 }
 
-sub command_spam {
-    my ($self,$data) = @_;
-    
-    my $icon  = Padre::Wx::Icon::find(
-        'status/padre-plugin-swarm',
-        {
-                size  => '128x128',
-                icons => $self->plugin_icons_directory,
-        } 
-    );
-    $icon->Show;
-    
-}
-
 sub command_disco {
-    
+    my $self = shift;
+    $self->plugin->send({type=>'disco'});
 }
 
 
@@ -331,10 +335,9 @@ sub tell_service {
 		? $body
 		: Padre::Swarm::Message->new(
 			body => $body,
-			from => $self->service->identity->nickname,
+			type => 'chat',
 		);
-
-	my $service = $self->service->tell($message)
+	$self->plugin->send($message)
 }
 
 sub on_text_enter {
@@ -342,7 +345,7 @@ sub on_text_enter {
     my $message = $self->textinput->GetValue;
     $self->textinput->SetValue('');
     
-    if ( $message =~ m{^/(\w+)\s+} ) {
+    if ( $message =~ m{^/(\w+)} ) {
         $self->accept_command( $message ) 
     }    
     else {
@@ -352,15 +355,15 @@ sub on_text_enter {
 
 sub accept_command {
     my ($self,$message) = @_;
+    $message =~ s|/||;
     # Handle /nick for now so everyone is not Anonymous_$$
-    my ($command,$data) = $message =~ m{^/(\w+)\s+(.+)} ;
-    if ( 'nick' eq $command ) {
-        $self->command_nick( $data );
-    } 
-    elsif ( 'spam' eq $command ) {
-        $self->command_spam( $data );
-    }
-    else { $self->tell_service( $message ); }
+    my ($command,$data) = split /\s/ , $message ,2 ;
+    
+    my $handler = 'command_' . $command;
+    if ( $self->can( $handler ) ) {
+	$self->$handler($data);
+    	
+    } else { $self->tell_service( $message ); }
     
 }
 
