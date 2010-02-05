@@ -26,7 +26,7 @@ use Class::XSAccessor
 	
 use Wx::Socket ();
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 our @ISA     = 'Padre::Plugin';
 
 # The padre multicast group (unofficial)
@@ -56,10 +56,8 @@ SCOPE: {
 	$SERVICE = $listen_service;
 	$SOCK_SEND = Wx::DatagramSocket->new( $WxLocalAddr );
 	
-
-	#EVT_SOCKET_INPUT($self->main , $sock , \&onConnect ) ;
 	Wx::Event::EVT_COMMAND(
-		$self->main,
+		Padre->ide->wx,
 		-1,
 		$EVT_RECV,
 		sub { $self->accept_message(@_) }
@@ -102,7 +100,8 @@ sub _send {
 }
 
 sub accept_message { 
-	my ($self,$main,$event) = @_;
+	my ($self,$wx,$event) = @_;
+	my $main = $wx->main;
 	my $data = $event->GetData;
 	unless ( __PACKAGE__->instance ) {
 		TRACE( "Caught message event late/early '$data'" ) if DEBUG;
@@ -226,7 +225,7 @@ SCOPE: {
 		my $message_event  = Wx::NewEventType;
 		$self->message_event($message_event);
 
-		require Padre::Wx::Swarm::Chat;
+		require Padre::Plugin::Swarm::Wx::Chat;
 		require Padre::Plugin::Swarm::Wx::Resources;
 		require Padre::Plugin::Swarm::Wx::Editor;
 
@@ -242,7 +241,7 @@ SCOPE: {
 		$self->editor($editor);
 		$editor->enable;
 
-		my $chat = Padre::Wx::Swarm::Chat->new( $self->main );
+		my $chat = Padre::Plugin::Swarm::Wx::Chat->new( $self->main );
 		$self->chat( $chat );
 		$chat->enable;
 

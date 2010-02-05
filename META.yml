@@ -26,10 +26,11 @@ requires:
   Graph: 0
   IO::Select: 0
   IO::Socket::Multicast: 1.11
+  JSON::XS: 2.26
   Padre: 0.56
   Params::Util: 1.00
   Text::Patch: 1.04
   perl: 5.8.0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.07
+version: 0.08
