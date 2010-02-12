@@ -7,7 +7,7 @@ use Carp qw( croak );
 # Provide a ->Dumper method
 use Data::Dumper 'Dumper';
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 sub new {
 	my $class = shift;
@@ -45,6 +45,13 @@ sub from {
 	$self->{from};
 }
 
+sub service {
+	my $self = shift;
+	$self->{service} = shift if @_;
+	$self->{service};
+	
+}
+
 sub TO_JSON {
 	## really should be the canonical identity
 	my $self = shift;
@@ -53,8 +60,7 @@ sub TO_JSON {
 	unless ( $msg =~ s/^Padre::Swarm::Message:*// ) {
 		croak "Not a swarm message!";
 	}
-	# warn "Sending msg origin class of '$msg'";
-	$ref->{__origin_class} = $msg if $msg; 
+	$ref->{__origin_class} = $msg if $msg;  # see Transport::_marshal
 	$ref;
 }
 

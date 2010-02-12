@@ -1,15 +1,15 @@
-package Padre::Service::Swarm;
-
+package Padre::Plugin::Swarm::Transport::Local::Multicast::Service;
 use strict;
 use warnings;
-use JSON::XS;
+use JSON;
 use Padre::Wx      ();
 use Padre::Service ();
+use Padre::Logger;
 use Padre::Swarm::Message;
 use IO::Select;
 use IO::Socket::Multicast;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 our @ISA     = 'Padre::Service';
 
 use Class::XSAccessor
@@ -19,27 +19,12 @@ use Class::XSAccessor
 		client     => 'client',
 	};
 
-=pod
-
-=head1 Padre::Service::Swarm - Buzzing Swarm!
-
-Join the buzz , schedule a Swarm service to throw a event at you 
-when something interesting happens.
-
-=head1 SYNOPSIS
-
-=head1 METHODS
-
-=cut
-
-use Carp qw( cluck  croak);
-use Data::Dumper;
 
 sub hangup {
 	my $self = shift;
 	my $running = shift;
 	$$running = 0;
-	$self->client->shutdown(1);
+	$self->client->shutdown(1) if $self->client;
 	$self->client(undef);
 	
 }
@@ -52,18 +37,20 @@ sub terminate {
 
 }
 
-SCOPE: {
-	my $service;
-	sub service_loop {
-		my $self = shift;
-		
-		if (my ($message) = $self->poll(0.2) ) {
-			$self->handle_message($message);
-		}
-		
-		return 1;
+
+sub service_loop {
+	my $self = shift;
+	
+	if (my ($message) = $self->poll(0.2) ) {
+		$self->post_event( 
+			$self->event, 
+			$message
+		);
 	}
+	
+	return 1;
 }
+
 
 sub poll  {
 	my $self = shift;
@@ -75,9 +62,9 @@ sub poll  {
 		my ($message) = $self->receive($ready);
 		if ($message) {
 			return $message;
-1		}
+		}
 	}
-	
+	return ();
 }
 
 sub receive {
@@ -86,14 +73,10 @@ sub receive {
 	my $buffer;
 	my $remote = $sock->recv( $buffer, 65535 );
 	if  ( $remote ) {
-		my ($rport,$raddr) = sockaddr_in $remote;
-		my $ip = inet_ntoa $raddr;
-		my $message = eval { $self->marshal->decode( $buffer ) };
-		# todo - include the transport info in the message
-		if ( $@ ) {
-			warn "Swarm Failed decoding ! $@ --- '$buffer'";
-		}
-		return $message;;
+		#my $marshal = Padre::Plugin::Swarm::Transport->_marshal;
+		#my ($rport,$raddr) = sockaddr_in $remote;
+		#my $ip = inet_ntoa $raddr;
+		return $buffer;
 	}
 	
 }
@@ -110,39 +93,13 @@ sub start {
 	
 	$self->{client} = $client;
 	$self->{running} = 1;
-
-
-}
-
-sub handle_message {
-	my $self = shift;
-	my $message = shift;
-	return unless $message;
-	$self->post_event( 
-		$self->event, 
-		Storable::freeze ($message)
+	$self->post_event(
+		$self->event,
+		'ALIVE'
 	);
+
 }
 
-sub marshal {
-	JSON::XS->new
-		->allow_blessed
-		->convert_blessed
-		->utf8
-		->filter_json_object(\&synthetic_class );
-}
-
-sub synthetic_class {
-	my $var = shift ;
-	if ( exists $var->{__origin_class} ) {
-		my $stub = $var->{__origin_class};
-		my $msg_class = 'Padre::Swarm::Message::' . $stub;
-		my $instance = bless $var , $msg_class;
-		return $instance;
-	} else {
-		return bless $var , 'Padre::Swarm::Message';
-	}
-};
 
 
 1;

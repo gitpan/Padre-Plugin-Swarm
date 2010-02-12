@@ -4,6 +4,7 @@ use 5.008;
 use strict;
 use warnings;
 use File::Spec             ();
+use Wx::Socket             ();
 use Padre::Constant        ();
 use Padre::Wx              ();
 use Padre::Plugin          ();
@@ -12,6 +13,8 @@ use Padre::Service::Swarm  ();
 use Padre::Swarm::Geometry ();
 use Padre::Logger;
 
+our $VERSION = '0.09';
+our @ISA     = 'Padre::Plugin';
 
 use Class::XSAccessor 
 	accessors => {
@@ -22,107 +25,80 @@ use Class::XSAccessor
 		config   => 'config',
 		message_event => 'message_event',
 		wx => 'wx',
+		transport => 'transport',
 	};
 	
-use Wx::Socket ();
-
-our $VERSION = '0.08';
-our @ISA     = 'Padre::Plugin';
-
-# The padre multicast group (unofficial)
-my $WxSwarmAddr = Wx::IPV4address->new;
-$WxSwarmAddr->SetHostname('239.255.255.1');
-$WxSwarmAddr->SetService(12000);
-
-# Local address 
-my $WxLocalAddr = Wx::IPV4address->new;
-$WxLocalAddr->SetAnyAddress;
-$WxLocalAddr->SetService( 0 );
 
 
-
-
-
-SCOPE: {
-  my $SOCK_SEND;
-  my $EVT_RECV;
-  my $EVT_SWARM_RECV ;
-  my $SERVICE;
-  sub connect {
+sub connect {
 	my $self = shift;
-	my $listen_service = Padre::Service::Swarm->new;
-	$listen_service->schedule;
-	$EVT_RECV = $listen_service->event;
-	$SERVICE = $listen_service;
-	$SOCK_SEND = Wx::DatagramSocket->new( $WxLocalAddr );
-	
-	Wx::Event::EVT_COMMAND(
-		Padre->ide->wx,
-		-1,
-		$EVT_RECV,
-		sub { $self->accept_message(@_) }
-	);
-	
-	
-	
-  }
-  
-  sub disconnect {
-  	my $self = shift;
-  	
-  	
-  	$SERVICE->tell('HANGUP');
-  	$self->send( {type=>'leave'} );
-  	undef $EVT_RECV;
-  	undef $SOCK_SEND;
-  	undef $EVT_SWARM_RECV;
-  	
-  	
-  }
 
-sub event { $EVT_RECV }
+	# For now - use global, 
+	#  could be Padre::Plugin::Swarm::Transport::Local::Multicast
+	#   based on preferences
+	my $transport = 
+	Padre::Plugin::Swarm::Transport::Global::WxSocket->new(
+		wx => $self->wx,
+		on_recv => sub { $self->on_recv(@_) } ,
+		on_connect => sub { $self->on_transport_connect(@_) },
+		on_disconnect => sub { $self->on_transport_disconnect(@_) }
+	);
+		
+	$self->transport( $transport );
+	$transport->enable;
+
+	
+}
+
+sub disconnect {
+	my $self = shift;
+
+	$self->send( {type=>'leave'} );
+	$self->transport->disable;
+	$self->transport(undef);
+
+}
 
 sub send {
-	return unless $SOCK_SEND;
-	shift->_send(@_);
-}
-
-sub _send {
 	my $self = shift;
 	my $message = shift;
+	my $mclass = ref $message;
+	unless ( $mclass =~ /^Padre::Swarm::Message/ ) {
+		bless $message , 'Padre::Swarm::Message';
+	}
 	$message->{from} = $self->identity->nickname;
-	my $data =  $SERVICE->marshal->encode( $message );
-	$SOCK_SEND->SendTo($WxSwarmAddr, $data, length($data) );
+	$self->transport->send( $message );
+}
+
+sub on_transport_connect {
+	my ($self) = @_;
+	
+	TRACE( "Swarm transport connected" ) if DEBUG;
+	$self->send(
+		{ type=>'announce', service=>'swarm' }
+	);
+	$self->send(
+		{ type=>'disco', service=>'swarm' }
+	);
+	return;
+}
+
+sub on_transport_disconnect {
+	my ($self) = @_;
+	TRACE( "Swarm transport disconnected" ) if DEBUG;
 	
 }
 
 
-}
-
-sub accept_message { 
-	my ($self,$wx,$event) = @_;
-	my $main = $wx->main;
-	my $data = $event->GetData;
-	unless ( __PACKAGE__->instance ) {
-		TRACE( "Caught message event late/early '$data'" ) if DEBUG;
-		return;
-	}
-
-	if ( $data eq 'ALIVE' ) {
-		TRACE( "Swarm service is alive" ) if DEBUG;
-		$self->send(
-			{ type=>'announce', service=>'swarm' }
-		);
-		$self->send(
-			{ type=>'disco', service=>'swarm' }
-		);
-		return;
-	}
-	my $message = eval {  Storable::thaw( $data ); };
-	TRACE( "Got $message from service" ) if DEBUG;
+sub on_recv { 
+	my $self = shift;
+	my $message = shift;
+	
+	TRACE( "on_recv handler for " . $message->type ) if DEBUG;
 	# TODO can i use 'SWARM' instead?
-	my $lock = $main->lock('UPDATE'); 
+	my $lock = $self->main->lock('UPDATE'); 
 	my $handler = 'accept_' . $message->type;
+	
 	if ( $self->can( $handler ) ) {
 		TRACE( $handler ) if DEBUG;
 		eval { $self->$handler( $message ); };
@@ -131,34 +107,40 @@ sub accept_message {
 	# TODO - make these parts use the message event! srsly
 	$self->geometry->On_SwarmMessage( $message );
 	
-	# TODO resource browser should trap the event itself. 
-	#$self->resources->refresh;
-	
-	# 
+	#
+	my $data = Storable::freeze( $message ); 
 	Wx::PostEvent(
                 $self->wx,
                 Wx::PlThreadEvent->new( -1, $self->message_event , $data ),
         ) if $self->message_event;
+
 }
 
 sub accept_disco {
 	my ($self,$message) = @_;
 	$self->send( {type=>'promote',service=>'swarm'} );
-	
 }
 
 
 
 sub identity {
-	my $config = Padre::Config->read;
-	my $nickname = $config->identity_nickname;
-	unless ( $nickname ) {
-		$nickname = "Anonymous_$$";
+	my $self = shift;
+	unless ($self->{identity}) {
+		my $config = Padre::Config->read;
+		# Default to your padre nickname.
+		my $nickname = $config->identity_nickname;
+		#my $id = $$ . time(). $config . $self;
+		
+		unless ( $nickname ) {
+			$nickname = "Anonymous_$$";
+		}
+		$self->{identity} = 
+			Padre::Swarm::Identity->new( 
+				nickname => $nickname,
+				service => 'swarm',
+			);
 	}
-	Padre::Swarm::Identity->new( 
-		nickname => $nickname,
-		service => 'swarm',
-	);
+	return $self->{identity};
 }
 
 
@@ -195,6 +177,18 @@ sub plugin_icon {
 	);
 }
 
+sub plugin_large_icon {
+	my $class = shift;
+	my $icon  = Padre::Wx::Icon::find(
+		'status/padre-plugin-swarm',
+		{
+			size  => '128x128',
+			icons => $class->plugin_icons_directory,
+		} 
+	);
+	return $icon;
+}
+
 sub menu_plugins_simple {
     my $self = shift;
     return $self->plugin_name => [
@@ -228,12 +222,13 @@ SCOPE: {
 		require Padre::Plugin::Swarm::Wx::Chat;
 		require Padre::Plugin::Swarm::Wx::Resources;
 		require Padre::Plugin::Swarm::Wx::Editor;
-
+		require Padre::Plugin::Swarm::Wx::Preferences;
+		require Padre::Plugin::Swarm::Transport::Global::WxSocket;
+		require Padre::Plugin::Swarm::Transport::Local::Multicast;
 		
 		my $config = $self->config_read;
 		$self->config( $config );
-
-
+		
 		
 		$self->geometry( Padre::Swarm::Geometry->new );
 		
@@ -267,12 +262,34 @@ SCOPE: {
 		$self->editor->disable;
 		$self->editor(undef);
 		
+		$self->wx->Destroy;
+		$self->wx(undef);
 		$self->disconnect;
+		
 	
 		undef $instance;
 	
 		
 	}
+}
+
+# TODO Re-anable this when padre can survive plugin_preferences death
+sub NOT_plugin_preferences {
+	my $self = shift;
+	my $wx = shift;
+	if  ( $self->instance ) {
+		die "Please disable plugin before editing preferences\n";
+		
+	}
+	eval { 
+		my $dialog = Padre::Plugin::Swarm::Wx::Preferences->new($wx);
+		$dialog->ShowModal;
+		$dialog->Destroy;
+	};
+	
+	TRACE( "Preferences error $@" ) if DEBUG && $@;
+	
+	return;
 }
 
 
@@ -285,9 +302,6 @@ sub editor_disable {
 	my $self = shift;
 	$self->editor->editor_disable(@_);
 }
-
-
-
 
 
 # oh noes!
@@ -372,9 +386,37 @@ that look shiny in a demo :)
 
 Lessons learned here will be applied to more practical plugins later.
 
+=head1 FEATURES
+
+=over
+
+=item Global server transport
+
+=item Local network multicast transport.
+
+=item User chat - converse with other padre editors
+
+=item Resources - browse and open files from other users' editor
+
+=item Remote execution! Run arbitary code in other users' editor
+
+=back
+
+=head1 SEE ALSO
+
+L<Padre::Swarm::Manual>
+
+=head1 BUGS
+
+Many. Identity management and interaction with L<Padre::Swarm::Geometry> is
+rather poor.
+
+Crashes when 'Reload All Plugins' is called from the padre plugin manager
+
+
 =head1 COPYRIGHT
 
-Copyright 2009 The Padre development team as listed in Padre.pm
+Copyright 2009-2010 The Padre development team as listed in Padre.pm
 
 =head1 LICENSE
 

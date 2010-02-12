@@ -9,7 +9,7 @@ use Padre::Plugin::Swarm::Wx::Resources::TreeCtrl ();
 use Padre::Logger;
 use Params::Util qw( _INSTANCE ) ;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor {
@@ -54,7 +54,6 @@ sub new {
 		Wx::wxDefaultPosition,
 		Wx::wxDefaultSize,
 	);
-	$self->Hide;
 	$self->{tree}   = 
 		Padre::Plugin::Swarm::Wx::Resources::TreeCtrl->new($self);
 
@@ -67,6 +66,7 @@ sub new {
 	# Fits panel layout
 	$self->SetSizerAndFit($sizerh);
 	$sizerh->SetSizeHints($self);
+	$self->Hide;
 	TRACE( "Resource tree Ready - ", $self->tree );
 	return $self;
 	
@@ -172,8 +172,16 @@ sub accept_destroy {
 	}
 }
 
-sub accept_disco {}
+sub accept_disco {
+	my ($self,$message) = @_;
+	
+}
 
+sub accept_leave {
+	my ($self,$message) = @_;
+	$self->refresh;
+	
+}
 
 
 # Perform a full redraw :(

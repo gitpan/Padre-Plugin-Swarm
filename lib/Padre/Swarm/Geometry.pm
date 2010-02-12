@@ -5,12 +5,11 @@ use warnings;
 use Params::Util qw( _INSTANCE );
 use Graph;
 use Graph::Directed;
-use JSON::XS;
 use Class::XSAccessor 
     accessors => {
 	graph => 'graph',
     };
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 =pod
 
