@@ -12,12 +12,11 @@ use Padre::Logger;
 use Padre::Wx ();
 use Padre::Config ();
 use Padre::Plugin::Swarm ();
-use Padre::Service::Swarm;
 use Padre::Swarm::Identity;
 use Padre::Swarm::Message;
 use Padre::Swarm::Message::Diff;
 use Padre::Util;
-our $VERSION = '0.091';
+our $VERSION = '0.092';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor
