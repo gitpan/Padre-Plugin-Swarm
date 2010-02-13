@@ -6,12 +6,16 @@ use Padre::Wx ();
 use Padre::Logger;
 use base qw( Padre::Plugin::Swarm::Transport );
 
-our $VERSION = '0.092';
+our $VERSION = '0.093';
+
+our $KEEPALIVE_TIMER_ID = Wx::NewId;
+
+
 
 use Class::XSAccessor
-#    constructor => 'new', # 
     accessors => {
         socket => 'socket',
+        keepalive=>'keepalive',
         config => 'config',
         token  => 'token',
         on_connect => 'on_connect',
@@ -53,7 +57,6 @@ sub connect {
     ) ;
     
 
-
     $sock->Connect( 
         $addr , # Host 
         12000,  # Port
@@ -68,7 +71,10 @@ sub disconnect {
     my $self = shift;
     TRACE( "Disconnecting!" ) if DEBUG;
     $self->socket->Destroy;
+
+    $self->keepalive->Stop if $self->keepalive;
     
+    ();
 }
 
 
@@ -130,12 +136,33 @@ sub on_session_start {
         }
         
         # Notify the callback
-        $self->on_connect->() if $self->on_connect;
+        $self->on_connect->() if $self->on_connect;        
+        
+        my $timer = Wx::Timer->new( 
+            $self->plugin->wx, 
+            $KEEPALIVE_TIMER_ID 
+        );
+        $self->keepalive($timer);
+        
+        unless ( $timer->IsRunning ) {
+                Wx::Event::EVT_TIMER(
+                    $self->plugin->wx, 
+                    $KEEPALIVE_TIMER_ID, 
+                    sub { $self->on_timer_alarm(@_) } 
+                );
+                $timer->Start(60 * 1000, 0); # every minute
+        }
+
         
     }
     
 }
 
+sub on_timer_alarm {
+    my $self = shift;
+    $self->write(' ') ; # waste a packet :(
+    
+}
 
 sub on_socket_lost {
     my ($self,$sock,$wx,$evt) = @_;
@@ -151,20 +178,22 @@ sub on_socket_input {
     TRACE( "Socket Input" ) if DEBUG;
     my $marshal = $self->marshal;
     
-    my @messages;
     my $data = '';
+    my $buffer;
     # Read chunks of data from the socket until there is
     # no more to read, feeding it into the decoder.
     # TODO - can we yield to WxIdle in here? .. safely?
-    while ( $sock->Read( $data, 1024, length($data)  ) ) {
-        my @m = eval { $marshal->incr_parse($data) };
-        if ($@) {
-            TRACE( "Unparsable message - $@" ) if DEBUG;
-            $marshal->incr_skip;
-        } else {
-            push @messages ,@m if @m;
-        }
+    while ( $sock->Read( $data, 1024, 0  ) ) {
+        $buffer .= $data;
         $data='';
+    }
+    eval { $marshal->incr_parse($buffer) }; # VOID context pls!!
+    TRACE( "Pumped $buffer from socket" ) if DEBUG;
+    my @messages;
+    push @messages , eval { $marshal->incr_parse() };
+    if ($@) {
+            TRACE( "Unparsable message - $@" ) if DEBUG;
+            #$marshal->incr_skip;
     }
     
     foreach my $m ( @messages ) {

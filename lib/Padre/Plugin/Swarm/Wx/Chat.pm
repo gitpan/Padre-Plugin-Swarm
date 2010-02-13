@@ -16,7 +16,7 @@ use Padre::Swarm::Identity;
 use Padre::Swarm::Message;
 use Padre::Swarm::Message::Diff;
 use Padre::Util;
-our $VERSION = '0.092';
+our $VERSION = '0.093';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor
@@ -52,7 +52,7 @@ sub new {
 		$self, -1, '',
 		Wx::wxDefaultPosition,
 		Wx::wxDefaultSize,
-		Wx::wxTE_PROCESS_ENTER
+		Wx::wxTE_PROCESS_ENTER | Wx::wxTE_PROCESS_TAB
 	);
 	my $chat = Wx::TextCtrl->new(
 		$self, -1, '',
@@ -60,8 +60,13 @@ sub new {
 		Wx::wxDefaultSize,
 		Wx::wxTE_READONLY
 		| Wx::wxTE_MULTILINE
+		| Wx::wxTE_RICH
 		| Wx::wxNO_FULL_REPAINT_ON_RESIZE
 	);
+	my $style = $chat->GetDefaultStyle;
+	my $font   = Wx::Font->new( 10, Wx::wxTELETYPE, Wx::wxNORMAL, Wx::wxNORMAL );
+	$style->SetFont($font);
+	$chat->SetDefaultStyle( $style );
 	
 	my $userlist = Wx::ListView->new(
 		$self, -1 ,
@@ -69,6 +74,7 @@ sub new {
                 Wx::wxDefaultSize,
                 Wx::wxLC_REPORT | Wx::wxLC_SINGLE_SEL
         );
+        
         $userlist->InsertColumn( 0, 'Users' );
         $userlist->SetColumnWidth( 0, -1 );
 	$self->userlist($userlist);
@@ -100,6 +106,11 @@ sub new {
 	Wx::Event::EVT_TEXT_ENTER(
                 $self, $text,
                 \&on_text_enter
+        );
+        
+        Wx::Event::EVT_CHAR(
+		$text,
+		sub{ $self->on_text_char(@_) },
         );
 
 	return $self;
@@ -330,6 +341,32 @@ sub on_text_enter {
     }
 }
 
+sub on_text_char {
+	my ($self,$ctrl,$event) = @_;
+	my $code = $event->GetKeyCode;
+        if ($code != Wx::WXK_TAB) {
+                $event->Skip(1);
+                return;
+        }
+        my $partial = $ctrl->GetValue;
+        my ($fragment) = $partial =~ /(\w+)$/;
+        return unless $fragment;
+        
+        my @users = $self->plugin->geometry->get_users;
+        my @possible = grep { $_ =~ /^$fragment/ } @users;
+        if ( scalar @possible == 1 ) {
+        	my $replace = shift @possible;
+        	my $fragment_size = length($fragment);
+        	substr( $partial, 
+			-$fragment_size, $fragment_size, 
+			$replace );
+        	$ctrl->SetValue($partial) ;
+        	$ctrl->SetInsertionPointEnd;
+        }
+	return;
+	
+}
+
 sub accept_command {
     my ($self,$message) = @_;
     $message =~ s|/||;
@@ -495,7 +532,32 @@ sub derive_rgb {
     return \@rgb;
 }
 
+=pod
 
+=head1 NAME
+
+Padre::Plugin::Swarm::Wx::Chat - Swarm chat console
+
+=head1 DESCRIPTION
+
+Basic chat client for Padre swarm users. 
+
+=head1 COMMANDS
+
+Slash type commands are supported in the chat console
+
+=head2 /nick
+
+Change nickname. 
+
+eg;
+     /nick my_name_is
+     
+=head2 /disco
+
+Send a discovery message to the swarm.
+
+=cut
 
 
 1;
