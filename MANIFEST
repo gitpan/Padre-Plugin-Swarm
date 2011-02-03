@@ -41,6 +41,7 @@ lib/Padre/Swarm/Message/Diff.pm
 Makefile.PL
 MANIFEST			This list of files
 META.yml
+Padre-Plugin-Swarm-0.094.tar.gz
 README
 share/icons/padre/128x128/status/padre-plugin-swarm.png
 share/icons/padre/16x16/status/padre-plugin-swarm.png
