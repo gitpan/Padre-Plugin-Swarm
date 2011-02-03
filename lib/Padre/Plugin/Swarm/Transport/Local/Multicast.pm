@@ -4,20 +4,18 @@ use warnings;
 use Wx qw( :socket );
 use Padre::Wx ();
 use Padre::Logger;
-use base qw( Padre::Plugin::Swarm::Transport );
+use base qw( Padre::Plugin::Swarm::Transport  Padre::Role::Task );
 use Padre::Plugin::Swarm::Transport::Local::Multicast::Service;
 
-our $VERSION = '0.093';
+our $VERSION = '0.094';
 
 use Class::XSAccessor
     accessors => {
         socket => 'socket',
         service => 'service',
         config => 'config',
+        token  => 'token',
         mcast_address => 'mcast_addr',
-        on_connect => 'on_connect',
-        on_disconnect => 'on_disconnect',
-        on_recv => 'on_recv',
         marshal => 'marshal',
     };
     
@@ -42,23 +40,18 @@ sub connect {
     $self->socket( $transmitter );
 
     # start the service thread listener
-    my $service = Padre::Plugin::Swarm::Transport::Local::Multicast::Service->new;
+    my $service = $self->task_request(
+        task => 'Padre::Plugin::Swarm::Transport::Local::Multicast::Service'
+    );
+    
     $self->service($service);
-    $service->schedule;
-    Wx::Event::EVT_COMMAND(
-		Padre->ide->wx,
-		-1,
-		$service->event,
-		sub { $self->on_service_recv(@_) }
-	);
-
     
 }
 
 sub disconnect {
     my $self = shift;
     $self->socket->Destroy;
-    $self->service->hangup;
+    #$self->service->hangup;
     
     # teardown the transmitting socket
     # hangup the service thread
@@ -66,12 +59,15 @@ sub disconnect {
 }
 
 sub on_service_recv {
-    my ($self,$wx,$evt) = @_;
-    my $data = $evt->GetData;
+    my ($self,$data) = @_;
+    TRACE( "On service recv with @_") if DEBUG;
     
     ## TODO - fix Padre::Service to have an event for started/stopped
     if ( $data eq 'ALIVE' ) {
         $self->on_connect->() if $self->on_connect;
+        return;
+    } elsif ( $data eq 'DEAD' ) {
+        $self->on_disconnect->() if $self->on_disconnect;
         return;
     }
     
@@ -79,15 +75,18 @@ sub on_service_recv {
     if ( $@ ) {
         TRACE( "Failed to decode data '$data' , $@" ) if DEBUG;
     }
-    if ( $self->on_recv ) {
-        $self->on_recv->( $_ ) for @messages;
+    foreach my $m ( @messages ) {
+    
+        $self->on_recv->( $m ) if $self->on_recv;
     }
 }
 
 # Send a Padre::Swarm::Message
-sub send {
+sub NOTsend {
     my $self = shift;
     my $message = shift;
+    $message->{token} ||= $self->{token};
+    
     my $data = eval { $self->marshal->encode( $message ) };
     if ($@) { 
         TRACE( "Failed to encode $message - $@" ) if DEBUG;

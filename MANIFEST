@@ -26,6 +26,7 @@ lib/Padre/Plugin/Swarm/Transport.pm
 lib/Padre/Plugin/Swarm/Transport/Global/WxSocket.pm
 lib/Padre/Plugin/Swarm/Transport/Local/Multicast.pm
 lib/Padre/Plugin/Swarm/Transport/Local/Multicast/Service.pm
+lib/Padre/Plugin/Swarm/Universe.pm
 lib/Padre/Plugin/Swarm/Wx/Chat.pm
 lib/Padre/Plugin/Swarm/Wx/Editor.pm
 lib/Padre/Plugin/Swarm/Wx/Preferences.pm
