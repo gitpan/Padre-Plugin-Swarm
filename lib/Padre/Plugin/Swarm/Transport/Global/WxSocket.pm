@@ -2,12 +2,13 @@ package Padre::Plugin::Swarm::Transport::Global::WxSocket;
 use strict;
 use warnings;
 use Wx qw( :socket );
+
 use Padre::Wx ();
 use Padre::Logger;
 use Data::Dumper;
 use base qw( Padre::Plugin::Swarm::Transport );
 
-our $VERSION = '0.1';
+our $VERSION = '0.11';
 
 our $KEEPALIVE_TIMER_ID = Wx::NewId;
 
@@ -27,6 +28,7 @@ sub loopback { 1 }
 
 sub enable {
     my $self = shift;
+    require Wx::Socket;
     my $servername = 'swarm.perlide.org';
     $self->connect( $servername ) ;
 }
