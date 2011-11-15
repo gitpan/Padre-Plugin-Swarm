@@ -10,7 +10,7 @@ use Class::XSAccessor
     accessors => {
 	graph => 'graph',
     };
-our $VERSION = '0.11';
+our $VERSION = '0.2';
 
 =pod
 
@@ -46,24 +46,23 @@ sub plugin {
 
 sub get_users {
 	my $self = shift;
-	return $self->graph->successors( '~identity' );
-	
+	my @users = $self->graph->successors('~identity');
+	return @users;
 }
 
 
 sub enable {}
 sub disable {}
 
-*on_recv = \&On_SwarmMessage;
-
-sub On_SwarmMessage {
+sub on_recv {
     my ($self,$message) = @_;
-    my $handler = 'accept_'  . $message->{type};
+    my $handler = 'accept_'  . $message->type;
+    TRACE( "Geometry recv $handler" ) if DEBUG;
     if ( $self->can($handler) ) {
 		TRACE( "Geometry handler $handler" ) if DEBUG;
 		eval { $self->$handler($message) } ;
 		if ( $@ ) {
-			TRACE( "Geometry handler error - $@" ) if DEBUG;
+			TRACE( "Geometry handler error - $@" );
 		}
     } else {
 		TRACE( "Ignored " . $message->type ) if DEBUG;
@@ -75,14 +74,12 @@ sub accept_promote {
 	my $self = shift;
 	my $message = shift;
 	$self->graph->add_edge( '~service' => $message->{service} );
-	#$self->graph->add_edge( $message->{service} , $message->{from} );
-	# just in case
 	$self->graph->add_edge( '~identity' => $message->{from} );
-	
+
 	if ($message->{resource}) {
 		$self->graph->add_edge( 
 			$message->{from} , 
-			':' . $message->{resource} );
+			$message->{resource} );
 	}
 	
 
@@ -91,12 +88,13 @@ sub accept_promote {
 sub accept_destroy {
 	my $self = shift;
 	my $message = shift;
-        return unless $message->{resource};
+	return unless $message->{resource};
+	
 	$self->graph->delete_edge( $message->{from} ,
-		':' . $message->{resource}
+		$message->{resource}
 	);
 		
-	$self->graph->delete_edge( ':' . $message->{resource} ,
+	$self->graph->delete_edge( $message->{resource} ,
 		$message->{service}
 	);
 	

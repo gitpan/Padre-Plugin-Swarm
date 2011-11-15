@@ -3,12 +3,13 @@ package Padre::Plugin::Swarm::Wx::Resources;
 use 5.008;
 use strict;
 use warnings;
-use Padre::Wx                        ();
+use Padre::Wx ();
+use Padre::Current ();
 use Padre::Plugin::Swarm::Wx::Resources::TreeCtrl ();
 use Padre::Logger;
 use Params::Util qw( _INSTANCE ) ;
 
-our $VERSION = '0.11';
+our $VERSION = '0.2';
 our @ISA     = 'Wx::Panel';
 
 use Class::XSAccessor {
@@ -23,6 +24,7 @@ use Class::XSAccessor {
 		project_dir_original  => 'project_dir_original',
 		previous_dir_original => 'previous_dir_original',
 		label => 'label',
+		universe => 'universe',
 	},
 };
 
@@ -46,7 +48,7 @@ sub plugin { Padre::Plugin::Swarm->instance }
 # and the Directory Browser
 sub new {
 	my $class = shift;
-	my $main  = shift;
+	my $main  = Padre::Current->main;
 	my %args = @_;
 	my $self = $class->SUPER::new(
 		$main->directory_panel,
@@ -56,8 +58,14 @@ sub new {
 	);
 	$self->label($args{label});
 	
+	$self->universe($args{universe});
+	
+	
 	$self->{tree}   = 
-		Padre::Plugin::Swarm::Wx::Resources::TreeCtrl->new($self);
+		Padre::Plugin::Swarm::Wx::Resources::TreeCtrl->new( $self,
+				universe => $args{universe} # ERK
+		
+		);
 
 	# Fill the panel
 	my $sizerv = Wx::BoxSizer->new(Wx::wxVERTICAL);
@@ -70,6 +78,10 @@ sub new {
 	$sizerh->SetSizeHints($self);
 	$self->Hide;
 	TRACE( "Resource tree Ready - ", $self->tree ) if DEBUG;
+	$self->universe->reg_cb( 'enable' , sub {  $self->enable(@_) } );
+	$self->universe->reg_cb( 'disable' , sub {$self->disable(@_) } );
+	$self->universe->reg_cb( 'recv' , sub { shift; $self->on_recv(@_) } );
+	
 	return $self;
 	
 }
@@ -96,7 +108,8 @@ sub disable {
 	my $pos = $left->GetPageIndex($self);
 	$self->Hide;
 	$left->RemovePage($pos);
-	$self->Destroy;
+	# Bad idea ?
+	#$self->Destroy;
 	
 }
 
@@ -135,16 +148,20 @@ sub clear {
 	return;
 }
 
+
+use Carp 'croak';
 sub on_recv {
 	my $self = shift;
+	#my $universe = shift;
 	my $message = shift;
+	
+	
 	my $handler = 'accept_' . $message->type;
-	TRACE( $handler ) if DEBUG;
-        if ( $self->can( $handler ) ) {
+	if ( $self->can( $handler ) ) {
             eval {
                 $self->$handler($message);
             };
-            TRACE( $handler . ' failed with ' . $@ ) if DEBUG && $@;
+            TRACE( $handler . ' failed with ' . $@ ) if $@; #DEBUG && $@;
             
         }
 	
@@ -189,9 +206,6 @@ sub refresh {
 
 
 	$self->tree->refresh;
-
-
-
 	# Update the panel label
 	$self->panel->refresh;
 
